@@ -1,0 +1,94 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Prepare project
+        run: |
+          PKG=$(grep -m1 -h '^package ' MainActivity.kt | awk '{print $2}' | tr -d ';')
+          echo "Package: $PKG"
+          SRC=proj/app/src/main/java/$(echo $PKG | tr . /)
+          mkdir -p "$SRC"
+          cp *.kt "$SRC"/
+          cp AndroidManifest.xml proj/app/src/main/
+          sed -i -E 's/\bpackage="[^"]*"//' proj/app/src/main/AndroidManifest.xml
+          if [ -d res ]; then
+            cp -r res proj/app/src/main/
+          else
+            sed -i -E 's/android:(icon|roundIcon)="[^"]*"//g' proj/app/src/main/AndroidManifest.xml
+          fi
+          cd proj
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "GoldLive"
+          include ':app'
+          EOF
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
+          }
+          EOF
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2g
+          EOF
+          cat > app/build.gradle <<EOF
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace '$PKG'
+              compileSdk 34
+              defaultConfig {
+                  applicationId '$PKG'
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = '17' }
+          }
+          dependencies {
+              implementation 'androidx.core:core-ktx:1.13.1'
+              implementation 'androidx.appcompat:appcompat:1.7.0'
+              implementation 'com.google.android.material:material:1.12.0'
+              implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+              implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+              implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+          }
+          EOF
+
+      - name: Build
+        run: cd proj && gradle assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GoldLive-apk
+          path: proj/app/build/outputs/apk/debug/*.apk
